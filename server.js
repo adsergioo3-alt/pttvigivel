@@ -162,4 +162,5 @@ function broadcastToRoom(roomName, msgText, senderWs) {
     });
 }
 
-server.listen(3000, () => console.log('Servidor PTT rodando na porta 3000'));
+const PORT = process.env.PORT || 3000;
+server.listen(PORT, () => console.log(`Servidor PTT rodando na porta ${PORT}`));
