@@ -10,6 +10,80 @@ const wss = new WebSocket.Server({ server });
 // roomName -> Map(ws -> {name, peerId})
 const rooms = new Map();
 
+function getStatus() {
+    let clients = 0;
+    for (const room of rooms.values()) {
+        clients += room.size;
+    }
+    return {
+        status: 'online',
+        timestamp: new Date().toISOString(),
+        rooms: rooms.size,
+        clients,
+    };
+}
+
+app.get('/', (req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="UTF-8">
+    <meta name="viewport" content="width=device-width, initial-scale=1.0">
+    <title>PTT Service Status</title>
+    <style>
+        body { font-family: Arial, sans-serif; background: #f2f2f7; color: #1a1a1a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
+        .card { background: white; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.08); padding: 24px; width: min(520px, 90vw); }
+        h1 { margin: 0 0 12px; font-size: 1.8rem; }
+        p { margin: 8px 0; line-height: 1.5; }
+        .status { font-weight: 700; color: #107c10; }
+        .offline { color: #a4262c; }
+        .stats { margin-top: 14px; padding: 16px; background: #f8f8ff; border-radius: 10px; }
+        button { margin-top: 16px; padding: 10px 18px; border:none; border-radius: 8px; background:#0078d4; color:white; cursor:pointer; }
+        button:hover { background:#005a9e; }
+    </style>
+</head>
+<body>
+    <div class="card">
+        <h1>PTT Service Status</h1>
+        <p>Use este painel para verificar se o serviço está online.</p>
+        <p>Último estado: <span id="status" class="status">carregando...</span></p>
+        <div class="stats">
+            <p><strong>Sala(s):</strong> <span id="rooms">0</span></p>
+            <p><strong>Cliente(s) conectados:</strong> <span id="clients">0</span></p>
+            <p><strong>Hora:</strong> <span id="time">--</span></p>
+        </div>
+        <button onclick="refreshStatus()">Atualizar</button>
+    </div>
+    <script>
+        async function refreshStatus() {
+            try {
+                const response = await fetch('/status');
+                if (!response.ok) throw new Error('Erro na requisição');
+                const data = await response.json();
+                document.getElementById('status').textContent = data.status;
+                document.getElementById('status').className = data.status === 'online' ? 'status' : 'offline';
+                document.getElementById('rooms').textContent = data.rooms;
+                document.getElementById('clients').textContent = data.clients;
+                document.getElementById('time').textContent = new Date(data.timestamp).toLocaleString();
+            } catch (error) {
+                document.getElementById('status').textContent = 'offline';
+                document.getElementById('status').className = 'offline';
+                document.getElementById('rooms').textContent = '-';
+                document.getElementById('clients').textContent = '-';
+                document.getElementById('time').textContent = '--';
+            }
+        }
+        refreshStatus();
+        setInterval(refreshStatus, 10000);
+    </script>
+</body>
+</html>`);
+});
+
+app.get('/status', (req, res) => {
+    res.json(getStatus());
+});
+
 wss.on('connection', (ws) => {
     console.log('Dispositivo conectado');
 
