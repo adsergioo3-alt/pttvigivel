@@ -53,6 +53,7 @@ app.get('/', (req, res) => {
             <p><strong>Hora:</strong> <span id="time">--</span></p>
         </div>
         <button onclick="refreshStatus()">Atualizar</button>
+        <button onclick="clearRooms()" style="margin-left: 8px; background:#d13438;">Limpar salas</button>
     </div>
     <script>
         async function refreshStatus() {
@@ -73,6 +74,15 @@ app.get('/', (req, res) => {
                 document.getElementById('time').textContent = '--';
             }
         }
+        async function clearRooms() {
+            try {
+                const response = await fetch('/clear-rooms', { method: 'POST' });
+                if (!response.ok) throw new Error('Erro na requisição');
+                await refreshStatus();
+            } catch (error) {
+                alert('Erro ao limpar salas');
+            }
+        }
         refreshStatus();
         setInterval(refreshStatus, 10000);
     </script>
@@ -82,6 +92,11 @@ app.get('/', (req, res) => {
 
 app.get('/status', (req, res) => {
     res.json(getStatus());
+});
+
+app.post('/clear-rooms', (req, res) => {
+    clearAllRooms();
+    res.json({ status: 'rooms_cleared' });
 });
 
 wss.on('connection', (ws) => {
@@ -160,6 +175,19 @@ function broadcastToRoom(roomName, msgText, senderWs) {
     room.forEach((userData, client) => {
         if (client !== senderWs && client.readyState === WebSocket.OPEN) client.send(msgText);
     });
+}
+
+function clearAllRooms() {
+    for (const [roomName, room] of rooms.entries()) {
+        room.forEach((userData, client) => {
+            if (client.readyState === WebSocket.OPEN) {
+                client.send(JSON.stringify({ type: 'room_cleared', room: roomName }));
+            }
+            client.room = undefined;
+            client.userData = undefined;
+        });
+        rooms.delete(roomName);
+    }
 }
 
 const PORT = process.env.PORT || 3000;
