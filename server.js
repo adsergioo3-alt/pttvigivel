@@ -296,7 +296,31 @@ wss.on('connection', (ws) => {
                 ws.userData = { name, peerId, isTalking: false };
 
                 if (!rooms.has(room)) rooms.set(room, new Map());
-                rooms.get(room).set(ws, ws.userData);
+                const roomMap = rooms.get(room);
+
+                // Prevenção de logins duplicados: se já existir um cliente
+                // com o mesmo `peerId` (preferido) ou `name`, encerramos a
+                // conexão antiga e substituímos pela nova.
+                let existingClient = null;
+                for (const [client, udata] of roomMap.entries()) {
+                    if (!udata) continue;
+                    if ((peerId && udata.peerId === peerId) || (!peerId && udata.name === name)) {
+                        existingClient = client;
+                        break;
+                    }
+                }
+
+                if (existingClient) {
+                    try {
+                        existingClient.send(JSON.stringify({ type: 'duplicate_login', reason: 'replaced_by_new_connection' }));
+                        existingClient.close(4000, 'replaced_by_new_connection');
+                    } catch (e) {
+                        // ignora erros ao fechar a conexão antiga
+                    }
+                    roomMap.delete(existingClient);
+                }
+
+                roomMap.set(ws, ws.userData);
 
                 console.log(`[Registro] ${name} entrou na sala ${room}`);
                 broadcastPresence(room);
