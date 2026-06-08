@@ -285,39 +285,107 @@ app.get('/map', (req, res) => {
     <script>
         const map = L.map('map', { zoomControl: true, attributionControl: false }).setView([-15.7801, -47.9292], 4);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
-        let markers = [];
 
-        function updateMarkers(locations) {
-            markers.forEach(m => map.removeLayer(m));
-            markers = [];
-            if (!locations || !locations.length) return;
-            const bounds = [];
-            locations.forEach(loc => {
-                if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
-                const m = L.marker([loc.lat, loc.lng]).addTo(map);
-                m.bindPopup('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
-                markers.push(m);
-                bounds.push([loc.lat, loc.lng]);
-            });
-            if (bounds.length) map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
+        // Mantém um mapa de marcadores por identificador (nome + sala) para atualizações incrementais
+        const markersById = new Map();
+
+        function makeId(loc) {
+            // usa name+room como identificador; se não tiver name, usa lat/lng
+            if (loc.name) return `${loc.name}::${loc.room || ''}`;
+            return `${loc.lat}:${loc.lng}`;
         }
 
-        async function refresh() {
+        function applyLocations(locations) {
+            const seen = new Set();
+            if (!Array.isArray(locations)) locations = [];
+
+            locations.forEach(loc => {
+                if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
+                const id = makeId(loc);
+                seen.add(id);
+
+                if (markersById.has(id)) {
+                    // Atualiza posição e conteúdo do popup
+                    const marker = markersById.get(id);
+                    marker.setLatLng([loc.lat, loc.lng]);
+                    marker.getPopup().setContent('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
+                } else {
+                    const m = L.marker([loc.lat, loc.lng]).addTo(map);
+                    m.bindPopup('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
+                    markersById.set(id, m);
+                }
+            });
+
+            // Remove marcadores que não apareceram na nova lista
+            for (const id of Array.from(markersById.keys())) {
+                if (!seen.has(id)) {
+                    const m = markersById.get(id);
+                    map.removeLayer(m);
+                    markersById.delete(id);
+                }
+            }
+
+            // Ajusta bounds se houver marcadores
+            const all = Array.from(markersById.values()).map(m => m.getLatLng());
+            if (all.length) {
+                const bounds = all.map(p => [p.lat, p.lng]);
+                map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
+            }
+        }
+
+        async function fetchLocations() {
             try {
-                const res = await fetch('/status');
-                if (!res.ok) throw new Error('Falha ao obter status');
+                const res = await fetch('/locations');
+                if (!res.ok) throw new Error('Falha ao obter localizações');
                 const data = await res.json();
-                updateMarkers(data.userLocations);
+                applyLocations(data.userLocations || []);
             } catch (e) {
                 console.error(e);
             }
         }
 
-        refresh();
-        setInterval(refresh, 5000);
+        // Real-time via WebSocket (com fallback em polling)
+        function initRealtime() {
+            try {
+                const proto = location.protocol === 'https:' ? 'wss' : 'ws';
+                const socket = new WebSocket(proto + '://' + location.host);
+
+                socket.addEventListener('open', () => {
+                    socket.send(JSON.stringify({ type: 'map_subscribe' }));
+                });
+
+                socket.addEventListener('message', (ev) => {
+                    try {
+                        const d = JSON.parse(ev.data);
+                        if (d.type === 'locations') {
+                            applyLocations(d.userLocations || []);
+                        }
+                    } catch (err) { }
+                });
+
+                socket.addEventListener('close', () => {
+                    setTimeout(initRealtime, 3000);
+                });
+
+                socket.addEventListener('error', () => socket.close());
+            } catch (e) {
+                // ignore and rely on polling
+            }
+        }
+
+        initRealtime();
+        // Fallback: polling a cada 5s
+        fetchLocations();
+        setInterval(fetchLocations, 5000);
     </script>
 </body>
 </html>`);
+});
+
+// Rota leve que retorna somente as localizações (útil para páginas que atualizam só os pontos)
+app.get('/locations', (req, res) => {
+    const status = getStatus();
+    res.json({ userLocations: status.userLocations || [], lastLocationUpdate: status.lastLocationUpdate || null });
 });
 
 app.get('/status', (req, res) => {
@@ -340,6 +408,17 @@ wss.on('connection', (ws) => {
             // Agora sim tentamos o JSON.parse
             const data = JSON.parse(msgText);
             console.log('[WS] mensagem recebida:', data.type || 'sem tipo', msgText);
+
+            // inscrição de viewers de mapa (páginas /map)
+            if (data.type === 'map_subscribe') {
+                ws.isMapViewer = true;
+                // envia estado inicial
+                const status = getStatus();
+                try {
+                    ws.send(JSON.stringify({ type: 'locations', userLocations: status.userLocations || [], lastLocationUpdate: status.lastLocationUpdate || null }));
+                } catch (e) {}
+                return;
+            }
 
             if (data.type === 'register') {
                 const { room, name, peerId } = data;
@@ -411,6 +490,11 @@ wss.on('connection', (ws) => {
                             lng,
                             message: logMessage,
                         };
+                        // envia atualização em tempo real para viewers de mapa
+                        try {
+                            const payload = JSON.stringify({ type: 'locations', userLocations: getStatus().userLocations, lastLocationUpdate });
+                            broadcastToViewers(payload);
+                        } catch (e) { /* ignore */ }
                     } else {
                         console.warn('[Localização] coordenadas inválidas recebidas:', data.lat, data.lng);
                     }
@@ -455,6 +539,14 @@ function broadcastTalkingState(roomName, senderWs) {
     const msg = JSON.stringify({ type: 'user_talking', name: sender.name, isTalking: sender.isTalking });
     room.forEach((userData, client) => {
         if (client !== senderWs && client.readyState === WebSocket.OPEN) client.send(msg);
+    });
+}
+
+function broadcastToViewers(msgText) {
+    wss.clients.forEach(client => {
+        try {
+            if (client.isMapViewer && client.readyState === WebSocket.OPEN) client.send(msgText);
+        } catch (e) {}
     });
 }
 
