@@ -13,9 +13,20 @@ const rooms = new Map();
 function getStatus() {
     let clients = 0;
     const roomDetails = [];
+    const userLocations = [];
     for (const [roomName, room] of rooms.entries()) {
         clients += room.size;
         roomDetails.push({ room: roomName, users: room.size });
+        for (const userData of room.values()) {
+            if (userData && typeof userData.lat === 'number' && typeof userData.lng === 'number') {
+                userLocations.push({
+                    name: userData.name,
+                    room: roomName,
+                    lat: userData.lat,
+                    lng: userData.lng,
+                });
+            }
+        }
     }
     return {
         status: 'online',
@@ -23,6 +34,7 @@ function getStatus() {
         rooms: rooms.size,
         clients,
         roomDetails,
+        userLocations,
     };
 }
 
@@ -33,6 +45,7 @@ app.get('/', (req, res) => {
     <meta charset="UTF-8">
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PTT Service Status</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
         :root {
             color-scheme: light;
@@ -74,7 +87,9 @@ app.get('/', (req, res) => {
         .room-item { padding: 14px 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
         .room-item strong { color: var(--text); }
         .no-rooms { color: var(--muted); }
+        #map { width: 100%; min-height: 420px; border-radius: 24px; border: 1px solid var(--border); }
     </style>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
 <body>
     <div class="container">
@@ -115,6 +130,11 @@ app.get('/', (req, res) => {
         </section>
 
         <section class="room-card">
+            <h2>Mapa de localização</h2>
+            <div id="map"></div>
+        </section>
+
+        <section class="room-card">
             <h2>Salas ativas</h2>
             <ul id="roomList" class="room-list">
                 <li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>
@@ -132,6 +152,36 @@ app.get('/', (req, res) => {
         const nextRefreshEl = document.getElementById('nextRefresh');
         let nextRefreshAt = Date.now() + 10000;
         let countdownTimer;
+        let map;
+        let markers = [];
+
+        function initMap() {
+            map = L.map('map', { zoomControl: true, attributionControl: false }).setView([-15.7801, -47.9292], 4);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
+                maxZoom: 19,
+                attribution: '&copy; OpenStreetMap contributors',
+            }).addTo(map);
+        }
+
+        function updateMapLocations(locations) {
+            markers.forEach(marker => map.removeLayer(marker));
+            markers = [];
+            if (!locations || !locations.length) {
+                map.setView([-15.7801, -47.9292], 4);
+                return;
+            }
+            const bounds = [];
+            locations.forEach(loc => {
+                if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
+                const marker = L.marker([loc.lat, loc.lng]).addTo(map);
+                marker.bindPopup('<strong>' + loc.name + '</strong><br>' + loc.room);
+                markers.push(marker);
+                bounds.push([loc.lat, loc.lng]);
+            });
+            if (bounds.length) {
+                map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
+            }
+        }
 
         function setLoading(isLoading) {
             refreshBtn.disabled = isLoading;
@@ -171,6 +221,7 @@ app.get('/', (req, res) => {
                 document.getElementById('clients').textContent = data.clients;
                 document.getElementById('time').textContent = new Date(data.timestamp).toLocaleTimeString();
                 renderRooms(data.roomDetails);
+                updateMapLocations(data.userLocations);
                 nextRefreshAt = Date.now() + 10000;
                 updateCountdown();
             } catch (error) {
@@ -201,6 +252,7 @@ app.get('/', (req, res) => {
             }
         }
 
+        initMap();
         refreshStatus();
         countdownTimer = setInterval(updateCountdown, 250);
         setInterval(refreshStatus, 10000);
@@ -246,6 +298,15 @@ wss.on('connection', (ws) => {
                 if (ws.room) {
                     // Repassa exatamente a mesma string para os outros
                     broadcastToRoom(ws.room, msgText, ws);
+                }
+            }
+
+            if (data.type === 'location_update') {
+                if (ws.userData) {
+                    ws.userData.lat = data.lat;
+                    ws.userData.lng = data.lng;
+                    console.log(`[Localização] ${ws.userData.name} está em: ${data.lat}, ${data.lng}`);
+                    // Opcional: Avisar outros usuários ou salvar no banco de dados
                 }
             }
 
