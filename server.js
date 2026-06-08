@@ -269,6 +269,57 @@ app.get('/', (req, res) => {
 </html>`);
 });
 
+app.get('/map', (req, res) => {
+    res.send(`<!DOCTYPE html>
+<html lang="pt-BR">
+<head>
+    <meta charset="utf-8">
+    <meta name="viewport" content="width=device-width,initial-scale=1">
+    <title>Mapa - PTT</title>
+    <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
+    <style>html,body,#map{height:100%;margin:0;padding:0}body{font-family:Inter,system-ui,Arial,sans-serif}</style>
+</head>
+<body>
+    <div id="map"></div>
+    <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
+    <script>
+        const map = L.map('map', { zoomControl: true, attributionControl: false }).setView([-15.7801, -47.9292], 4);
+        L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        let markers = [];
+
+        function updateMarkers(locations) {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            if (!locations || !locations.length) return;
+            const bounds = [];
+            locations.forEach(loc => {
+                if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
+                const m = L.marker([loc.lat, loc.lng]).addTo(map);
+                m.bindPopup('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
+                markers.push(m);
+                bounds.push([loc.lat, loc.lng]);
+            });
+            if (bounds.length) map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
+        }
+
+        async function refresh() {
+            try {
+                const res = await fetch('/status');
+                if (!res.ok) throw new Error('Falha ao obter status');
+                const data = await res.json();
+                updateMarkers(data.userLocations);
+            } catch (e) {
+                console.error(e);
+            }
+        }
+
+        refresh();
+        setInterval(refresh, 5000);
+    </script>
+</body>
+</html>`);
+});
+
 app.get('/status', (req, res) => {
     res.json(getStatus());
 });
