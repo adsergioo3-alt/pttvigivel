@@ -334,6 +334,15 @@ wss.on('connection', (ws) => {
                 }
             }
 
+            // Repasse de imagens
+            if (data.type === 'image') {
+                if (ws.room) {
+                    console.log(`[Imagem] Recebida de: ${data.name} na sala ${ws.room}`);
+                    // Repassa exatamente a mesma string para os outros usuários na sala
+                    broadcastToRoom(ws.room, msgText, ws);
+                }
+            }
+
             if (data.type === 'location_update') {
                 if (ws.userData) {
                     const lat = Number(data.lat);
