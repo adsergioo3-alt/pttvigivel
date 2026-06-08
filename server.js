@@ -12,14 +12,17 @@ const rooms = new Map();
 
 function getStatus() {
     let clients = 0;
-    for (const room of rooms.values()) {
+    const roomDetails = [];
+    for (const [roomName, room] of rooms.entries()) {
         clients += room.size;
+        roomDetails.push({ room: roomName, users: room.size });
     }
     return {
         status: 'online',
         timestamp: new Date().toISOString(),
         rooms: rooms.size,
         clients,
+        roomDetails,
     };
 }
 
@@ -31,59 +34,175 @@ app.get('/', (req, res) => {
     <meta name="viewport" content="width=device-width, initial-scale=1.0">
     <title>PTT Service Status</title>
     <style>
-        body { font-family: Arial, sans-serif; background: #f2f2f7; color: #1a1a1a; display: flex; align-items: center; justify-content: center; min-height: 100vh; margin: 0; }
-        .card { background: white; border-radius: 12px; box-shadow: 0 12px 30px rgba(0,0,0,0.08); padding: 24px; width: min(520px, 90vw); }
-        h1 { margin: 0 0 12px; font-size: 1.8rem; }
-        p { margin: 8px 0; line-height: 1.5; }
-        .status { font-weight: 700; color: #107c10; }
-        .offline { color: #a4262c; }
-        .stats { margin-top: 14px; padding: 16px; background: #f8f8ff; border-radius: 10px; }
-        button { margin-top: 16px; padding: 10px 18px; border:none; border-radius: 8px; background:#0078d4; color:white; cursor:pointer; }
-        button:hover { background:#005a9e; }
+        :root {
+            color-scheme: light;
+            --bg: #eef1f8;
+            --card: #ffffff;
+            --text: #111827;
+            --muted: #6b7280;
+            --border: #d1d5db;
+            --primary: #2563eb;
+            --danger: #dc2626;
+            --success: #16a34a;
+            --surface: #f8fafc;
+        }
+        * { box-sizing: border-box; }
+        body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: radial-gradient(circle at top, rgba(37,99,235,0.12), transparent 32%), var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; padding: 24px; }
+        .container { width: min(100%, 940px); display: grid; gap: 20px; }
+        .top-card, .room-card { background: var(--card); border: 1px solid var(--border); border-radius: 24px; box-shadow: 0 18px 50px rgba(15,23,42,0.08); padding: 28px; }
+        .top-card header { display: flex; align-items: center; justify-content: space-between; gap: 16px; }
+        .top-card h1 { margin: 0; font-size: clamp(1.6rem, 2vw, 2.4rem); }
+        .subtitle { margin: 8px 0 0; color: var(--muted); }
+        .status-pill { display: inline-flex; align-items: center; gap: 10px; padding: 12px 16px; border-radius: 999px; background: rgba(22,163,74,0.12); color: var(--success); font-weight: 700; }
+        .status-pill.offline { background: rgba(220,38,38,0.12); color: var(--danger); }
+        .status-dot { width: 10px; height: 10px; border-radius: 50%; background: currentColor; }
+        .grid { display: grid; gap: 16px; grid-template-columns: repeat(auto-fit, minmax(180px, 1fr)); margin-top: 24px; }
+        .metric { border: 1px solid var(--border); border-radius: 18px; padding: 18px; background: var(--surface); }
+        .metric strong { display: block; font-size: 0.9rem; color: var(--muted); margin-bottom: 8px; }
+        .metric span { font-size: 1.7rem; font-weight: 700; }
+        .actions { display: flex; flex-wrap: wrap; gap: 12px; margin-top: 24px; }
+        button { border: none; border-radius: 14px; padding: 14px 20px; font-size: 0.95rem; font-weight: 700; cursor: pointer; transition: transform 0.15s ease, background-color 0.15s ease, opacity 0.15s ease; }
+        button:hover:not(:disabled) { transform: translateY(-1px); }
+        button:disabled { opacity: 0.6; cursor: not-allowed; }
+        .btn-primary { background: var(--primary); color: white; }
+        .btn-danger { background: var(--danger); color: white; }
+        .info-row { display: grid; grid-template-columns: 1fr auto; gap: 16px; align-items: center; margin-top: 18px; }
+        .note { color: var(--muted); font-size: 0.95rem; }
+        .error { color: var(--danger); font-weight: 700; margin-top: 14px; min-height: 1.2em; }
+        .room-card h2 { margin-top: 0; }
+        .room-list { list-style: none; padding: 0; margin: 0; display: grid; gap: 10px; }
+        .room-item { padding: 14px 16px; border-radius: 16px; background: var(--surface); border: 1px solid var(--border); display: flex; justify-content: space-between; align-items: center; }
+        .room-item strong { color: var(--text); }
+        .no-rooms { color: var(--muted); }
     </style>
 </head>
 <body>
-    <div class="card">
-        <h1>PTT Service Status</h1>
-        <p>Use este painel para verificar se o serviço está online.</p>
-        <p>Último estado: <span id="status" class="status">carregando...</span></p>
-        <div class="stats">
-            <p><strong>Sala(s):</strong> <span id="rooms">0</span></p>
-            <p><strong>Cliente(s) conectados:</strong> <span id="clients">0</span></p>
-            <p><strong>Hora:</strong> <span id="time">--</span></p>
-        </div>
-        <button onclick="refreshStatus()">Atualizar</button>
-        <button onclick="clearRooms()" style="margin-left: 8px; background:#d13438;">Limpar salas</button>
+    <div class="container">
+        <section class="top-card">
+            <header>
+                <div>
+                    <h1>PTT Service Status</h1>
+                    <p class="subtitle">Painel rápido para monitorar o servidor WebSocket e suas salas ativas.</p>
+                </div>
+                <div id="statusBadge" class="status-pill"><span class="status-dot"></span><span id="status">carregando...</span></div>
+            </header>
+            <div class="grid">
+                <div class="metric">
+                    <strong>Salas</strong>
+                    <span id="rooms">0</span>
+                </div>
+                <div class="metric">
+                    <strong>Clientes conectados</strong>
+                    <span id="clients">0</span>
+                </div>
+                <div class="metric">
+                    <strong>Última atualização</strong>
+                    <span id="time">--:--:--</span>
+                </div>
+                <div class="metric">
+                    <strong>Próxima atualização</strong>
+                    <span id="nextRefresh">--</span>
+                </div>
+            </div>
+            <div class="actions">
+                <button id="refreshBtn" class="btn-primary" onclick="refreshStatus()">Atualizar agora</button>
+                <button id="clearBtn" class="btn-danger" onclick="clearRooms()">Limpar salas</button>
+            </div>
+            <div class="info-row">
+                <p class="note">Atualiza automaticamente a cada 10 segundos. Use o botão para forçar uma atualização manual.</p>
+                <p id="message" class="error" aria-live="polite"></p>
+            </div>
+        </section>
+
+        <section class="room-card">
+            <h2>Salas ativas</h2>
+            <ul id="roomList" class="room-list">
+                <li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>
+            </ul>
+        </section>
     </div>
+
     <script>
+        const refreshBtn = document.getElementById('refreshBtn');
+        const clearBtn = document.getElementById('clearBtn');
+        const statusBadge = document.getElementById('statusBadge');
+        const statusEl = document.getElementById('status');
+        const messageEl = document.getElementById('message');
+        const roomList = document.getElementById('roomList');
+        const nextRefreshEl = document.getElementById('nextRefresh');
+        let nextRefreshAt = Date.now() + 10000;
+        let countdownTimer;
+
+        function setLoading(isLoading) {
+            refreshBtn.disabled = isLoading;
+            clearBtn.disabled = isLoading;
+        }
+
+        function updateCountdown() {
+            const seconds = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
+            nextRefreshEl.textContent = seconds === 0 ? 'agora' : seconds + 's';
+        }
+
+        function renderRooms(roomDetails) {
+            roomList.innerHTML = '';
+            if (!roomDetails.length) {
+                roomList.innerHTML = '<li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>';
+                return;
+            }
+            roomDetails.forEach(({ room, users }) => {
+                const li = document.createElement('li');
+                li.className = 'room-item';
+                li.innerHTML = '<strong>' + room + '</strong><span>' + users + ' usuário(s)</span>';
+                roomList.appendChild(li);
+            });
+        }
+
         async function refreshStatus() {
+            setLoading(true);
+            messageEl.textContent = '';
             try {
                 const response = await fetch('/status');
-                if (!response.ok) throw new Error('Erro na requisição');
+                if (!response.ok) throw new Error('Não foi possível obter o status.');
                 const data = await response.json();
-                document.getElementById('status').textContent = data.status;
-                document.getElementById('status').className = data.status === 'online' ? 'status' : 'offline';
+
+                statusEl.textContent = data.status;
+                statusBadge.className = 'status-pill' + (data.status !== 'online' ? ' offline' : '');
                 document.getElementById('rooms').textContent = data.rooms;
                 document.getElementById('clients').textContent = data.clients;
-                document.getElementById('time').textContent = new Date(data.timestamp).toLocaleString();
+                document.getElementById('time').textContent = new Date(data.timestamp).toLocaleTimeString();
+                renderRooms(data.roomDetails);
+                nextRefreshAt = Date.now() + 10000;
+                updateCountdown();
             } catch (error) {
-                document.getElementById('status').textContent = 'offline';
-                document.getElementById('status').className = 'offline';
+                statusEl.textContent = 'offline';
+                statusBadge.className = 'status-pill offline';
                 document.getElementById('rooms').textContent = '-';
                 document.getElementById('clients').textContent = '-';
                 document.getElementById('time').textContent = '--';
+                roomList.innerHTML = '<li class="room-item no-rooms">Falha ao carregar dados.</li>';
+                messageEl.textContent = error.message;
+            } finally {
+                setLoading(false);
             }
         }
+
         async function clearRooms() {
+            if (!confirm('Tem certeza que deseja limpar todas as salas?')) return;
+            setLoading(true);
+            messageEl.textContent = '';
             try {
                 const response = await fetch('/clear-rooms', { method: 'POST' });
-                if (!response.ok) throw new Error('Erro na requisição');
+                if (!response.ok) throw new Error('Erro ao limpar salas.');
                 await refreshStatus();
             } catch (error) {
-                alert('Erro ao limpar salas');
+                messageEl.textContent = error.message;
+            } finally {
+                setLoading(false);
             }
         }
+
         refreshStatus();
+        countdownTimer = setInterval(updateCountdown, 250);
         setInterval(refreshStatus, 10000);
     </script>
 </body>
