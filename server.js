@@ -9,6 +9,7 @@ const wss = new WebSocket.Server({ server });
 
 // roomName -> Map(ws -> {name, peerId})
 const rooms = new Map();
+let lastLocationUpdate = null;
 
 function getStatus() {
     let clients = 0;
@@ -35,6 +36,7 @@ function getStatus() {
         clients,
         roomDetails,
         userLocations,
+        lastLocationUpdate,
     };
 }
 
@@ -115,6 +117,10 @@ app.get('/', (req, res) => {
                     <span id="time">--:--:--</span>
                 </div>
                 <div class="metric">
+                    <strong>Último GPS</strong>
+                    <span id="lastLocation">nenhum</span>
+                </div>
+                <div class="metric">
                     <strong>Próxima atualização</strong>
                     <span id="nextRefresh">--</span>
                 </div>
@@ -148,6 +154,7 @@ app.get('/', (req, res) => {
         const statusBadge = document.getElementById('statusBadge');
         const statusEl = document.getElementById('status');
         const messageEl = document.getElementById('message');
+        const lastLocationEl = document.getElementById('lastLocation');
         const roomList = document.getElementById('roomList');
         const nextRefreshEl = document.getElementById('nextRefresh');
         let nextRefreshAt = Date.now() + 10000;
@@ -220,6 +227,7 @@ app.get('/', (req, res) => {
                 document.getElementById('rooms').textContent = data.rooms;
                 document.getElementById('clients').textContent = data.clients;
                 document.getElementById('time').textContent = new Date(data.timestamp).toLocaleTimeString();
+                lastLocationEl.textContent = data.lastLocationUpdate ? data.lastLocationUpdate.message : 'nenhum';
                 renderRooms(data.roomDetails);
                 updateMapLocations(data.userLocations);
                 nextRefreshAt = Date.now() + 10000;
@@ -280,6 +288,7 @@ wss.on('connection', (ws) => {
 
             // Agora sim tentamos o JSON.parse
             const data = JSON.parse(msgText);
+            console.log('[WS] mensagem recebida:', data.type || 'sem tipo', msgText);
 
             if (data.type === 'register') {
                 const { room, name, peerId } = data;
@@ -303,10 +312,26 @@ wss.on('connection', (ws) => {
 
             if (data.type === 'location_update') {
                 if (ws.userData) {
-                    ws.userData.lat = data.lat;
-                    ws.userData.lng = data.lng;
-                    console.log(`[Localização] ${ws.userData.name} está em: ${data.lat}, ${data.lng}`);
-                    // Opcional: Avisar outros usuários ou salvar no banco de dados
+                    const lat = Number(data.lat);
+                    const lng = Number(data.lng);
+                    if (Number.isFinite(lat) && Number.isFinite(lng)) {
+                        ws.userData.lat = lat;
+                        ws.userData.lng = lng;
+                        const logMessage = `[Localização] ${ws.userData.name} está em: ${lat}, ${lng} na sala ${ws.room || 'sem sala'}`;
+                        console.log(logMessage);
+                        lastLocationUpdate = {
+                            timestamp: new Date().toISOString(),
+                            name: ws.userData.name,
+                            room: ws.room,
+                            lat,
+                            lng,
+                            message: logMessage,
+                        };
+                    } else {
+                        console.warn('[Localização] coordenadas inválidas recebidas:', data.lat, data.lng);
+                    }
+                } else {
+                    console.warn('[Localização] recebido sem ws.userData', data);
                 }
             }
 
