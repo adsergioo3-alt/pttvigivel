@@ -90,16 +90,6 @@ app.get('/', (req, res) => {
         .room-item strong { color: var(--text); }
         .no-rooms { color: var(--muted); }
         #map { width: 100%; min-height: 420px; border-radius: 24px; border: 1px solid var(--border); }
-        .debug-log { font-family: 'Courier New', monospace; font-size: 0.85rem; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 12px; }
-        .log-entry { padding: 8px 0; border-bottom: 1px solid var(--border); }
-        .log-entry:last-child { border-bottom: none; }
-        .log-entry.success { color: var(--success); }
-        .log-entry.error { color: var(--danger); }
-        .log-entry.warning { color: #f59e0b; }
-        .log-entry.info { color: var(--primary); }
-        .log-time { color: var(--muted); font-size: 0.8rem; }
-        .debug-controls { display: flex; gap: 8px; margin-bottom: 12px; }
-        .debug-controls button { padding: 8px 12px; font-size: 0.85rem; }
     </style>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
@@ -155,17 +145,6 @@ app.get('/', (req, res) => {
             <ul id="roomList" class="room-list">
                 <li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>
             </ul>
-        </section>
-
-        <section class="room-card">
-            <h2>📡 Log de GPS (Debug)</h2>
-            <div class="debug-controls">
-                <button class="btn-primary" onclick="clearGpsLog()" style="font-size: 0.85rem; padding: 8px 12px;">Limpar log</button>
-                <button class="btn-primary" onclick="toggleAutoScroll()" id="autoScrollBtn" style="font-size: 0.85rem; padding: 8px 12px;">Auto-scroll: ON</button>
-            </div>
-            <div id="gpsLog" class="debug-log">
-                <div class="log-entry info"><span class="log-time">[00:00:00]</span> Sistema iniciado, aguardando dados...</div>
-            </div>
         </section>
     </div>
 
@@ -306,107 +285,39 @@ app.get('/map', (req, res) => {
     <script>
         const map = L.map('map', { zoomControl: true, attributionControl: false }).setView([-15.7801, -47.9292], 4);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
+        let markers = [];
 
-        // Mantém um mapa de marcadores por identificador (nome + sala) para atualizações incrementais
-        const markersById = new Map();
-
-        function makeId(loc) {
-            // usa name+room como identificador; se não tiver name, usa lat/lng
-            if (loc.name) return `${loc.name}::${loc.room || ''}`;
-            return `${loc.lat}:${loc.lng}`;
-        }
-
-        function applyLocations(locations) {
-            const seen = new Set();
-            if (!Array.isArray(locations)) locations = [];
-
+        function updateMarkers(locations) {
+            markers.forEach(m => map.removeLayer(m));
+            markers = [];
+            if (!locations || !locations.length) return;
+            const bounds = [];
             locations.forEach(loc => {
                 if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
-                const id = makeId(loc);
-                seen.add(id);
-
-                if (markersById.has(id)) {
-                    // Atualiza posição e conteúdo do popup
-                    const marker = markersById.get(id);
-                    marker.setLatLng([loc.lat, loc.lng]);
-                    marker.getPopup().setContent('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
-                } else {
-                    const m = L.marker([loc.lat, loc.lng]).addTo(map);
-                    m.bindPopup('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
-                    markersById.set(id, m);
-                }
+                const m = L.marker([loc.lat, loc.lng]).addTo(map);
+                m.bindPopup('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
+                markers.push(m);
+                bounds.push([loc.lat, loc.lng]);
             });
-
-            // Remove marcadores que não apareceram na nova lista
-            for (const id of Array.from(markersById.keys())) {
-                if (!seen.has(id)) {
-                    const m = markersById.get(id);
-                    map.removeLayer(m);
-                    markersById.delete(id);
-                }
-            }
-
-            // Ajusta bounds se houver marcadores
-            const all = Array.from(markersById.values()).map(m => m.getLatLng());
-            if (all.length) {
-                const bounds = all.map(p => [p.lat, p.lng]);
-                map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
-            }
+            if (bounds.length) map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
         }
 
-        async function fetchLocations() {
+        async function refresh() {
             try {
-                const res = await fetch('/locations');
-                if (!res.ok) throw new Error('Falha ao obter localizações');
+                const res = await fetch('/status');
+                if (!res.ok) throw new Error('Falha ao obter status');
                 const data = await res.json();
-                applyLocations(data.userLocations || []);
+                updateMarkers(data.userLocations);
             } catch (e) {
                 console.error(e);
             }
         }
 
-        // Real-time via WebSocket (com fallback em polling)
-        function initRealtime() {
-            try {
-                const proto = location.protocol === 'https:' ? 'wss' : 'ws';
-                const socket = new WebSocket(proto + '://' + location.host);
-
-                socket.addEventListener('open', () => {
-                    socket.send(JSON.stringify({ type: 'map_subscribe' }));
-                });
-
-                socket.addEventListener('message', (ev) => {
-                    try {
-                        const d = JSON.parse(ev.data);
-                        if (d.type === 'locations') {
-                            applyLocations(d.userLocations || []);
-                        }
-                    } catch (err) { }
-                });
-
-                socket.addEventListener('close', () => {
-                    setTimeout(initRealtime, 3000);
-                });
-
-                socket.addEventListener('error', () => socket.close());
-            } catch (e) {
-                // ignore and rely on polling
-            }
-        }
-
-        initRealtime();
-        // Fallback: polling a cada 5s
-        fetchLocations();
-        setInterval(fetchLocations, 5000);
+        refresh();
+        setInterval(refresh, 5000);
     </script>
 </body>
 </html>`);
-});
-
-// Rota leve que retorna somente as localizações (útil para páginas que atualizam só os pontos)
-app.get('/locations', (req, res) => {
-    const status = getStatus();
-    res.json({ userLocations: status.userLocations || [], lastLocationUpdate: status.lastLocationUpdate || null });
 });
 
 app.get('/status', (req, res) => {
@@ -429,17 +340,6 @@ wss.on('connection', (ws) => {
             // Agora sim tentamos o JSON.parse
             const data = JSON.parse(msgText);
             console.log('[WS] mensagem recebida:', data.type || 'sem tipo', msgText);
-
-            // inscrição de viewers de mapa (páginas /map)
-            if (data.type === 'map_subscribe') {
-                ws.isMapViewer = true;
-                // envia estado inicial
-                const status = getStatus();
-                try {
-                    ws.send(JSON.stringify({ type: 'locations', userLocations: status.userLocations || [], lastLocationUpdate: status.lastLocationUpdate || null }));
-                } catch (e) {}
-                return;
-            }
 
             if (data.type === 'register') {
                 const { room, name, peerId } = data;
@@ -494,33 +394,32 @@ wss.on('connection', (ws) => {
                 }
             }
 
-            if (data.type === 'location_update') {
-                if (ws.userData) {
-                    const lat = Number(data.lat);
-                    const lng = Number(data.lng);
-                    if (Number.isFinite(lat) && Number.isFinite(lng)) {
-                        ws.userData.lat = lat;
-                        ws.userData.lng = lng;
-                        const logMessage = `[Localização] ${ws.userData.name} está em: ${lat}, ${lng} na sala ${ws.room || 'sem sala'}`;
-                        console.log(logMessage);
-                        lastLocationUpdate = {
-                            timestamp: new Date().toISOString(),
-                            name: ws.userData.name,
-                            room: ws.room,
-                            lat,
-                            lng,
-                            message: logMessage,
-                        };
-                        // envia atualização em tempo real para viewers de mapa
-                        try {
-                            const payload = JSON.stringify({ type: 'locations', userLocations: getStatus().userLocations, lastLocationUpdate });
-                            broadcastToViewers(payload);
-                        } catch (e) { /* ignore */ }
-                    } else {
-                        console.warn('[Localização] coordenadas inválidas recebidas:', data.lat, data.lng);
-                    }
+            if (data.type === 'location_update' || data.type === 'location') {
+                const lat = Number(data.lat);
+                const lng = Number(data.lng);
+                if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
+                    console.warn('[Localização] coordenadas inválidas recebidas:', data.lat, data.lng);
                 } else {
-                    console.warn('[Localização] recebido sem ws.userData', data);
+                    if (!ws.userData) {
+                        ws.userData = { name: data.name || 'desconhecido' };
+                        if (ws.room) {
+                            if (!rooms.has(ws.room)) rooms.set(ws.room, new Map());
+                            rooms.get(ws.room).set(ws, ws.userData);
+                        }
+                    }
+                    if (data.name) ws.userData.name = data.name;
+                    ws.userData.lat = lat;
+                    ws.userData.lng = lng;
+                    const logMessage = `[Localização] ${ws.userData.name} está em: ${lat}, ${lng} na sala ${ws.room || 'sem sala'}`;
+                    console.log(logMessage);
+                    lastLocationUpdate = {
+                        timestamp: new Date().toISOString(),
+                        name: ws.userData.name,
+                        room: ws.room,
+                        lat,
+                        lng,
+                        message: logMessage,
+                    };
                 }
             }
 
@@ -560,14 +459,6 @@ function broadcastTalkingState(roomName, senderWs) {
     const msg = JSON.stringify({ type: 'user_talking', name: sender.name, isTalking: sender.isTalking });
     room.forEach((userData, client) => {
         if (client !== senderWs && client.readyState === WebSocket.OPEN) client.send(msg);
-    });
-}
-
-function broadcastToViewers(msgText) {
-    wss.clients.forEach(client => {
-        try {
-            if (client.isMapViewer && client.readyState === WebSocket.OPEN) client.send(msgText);
-        } catch (e) {}
     });
 }
 
