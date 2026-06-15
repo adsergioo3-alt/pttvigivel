@@ -90,6 +90,16 @@ app.get('/', (req, res) => {
         .room-item strong { color: var(--text); }
         .no-rooms { color: var(--muted); }
         #map { width: 100%; min-height: 420px; border-radius: 24px; border: 1px solid var(--border); }
+        .debug-log { font-family: 'Courier New', monospace; font-size: 0.85rem; max-height: 300px; overflow-y: auto; border: 1px solid var(--border); border-radius: 12px; background: var(--surface); padding: 12px; }
+        .log-entry { padding: 8px 0; border-bottom: 1px solid var(--border); }
+        .log-entry:last-child { border-bottom: none; }
+        .log-entry.success { color: var(--success); }
+        .log-entry.error { color: var(--danger); }
+        .log-entry.warning { color: #f59e0b; }
+        .log-entry.info { color: var(--primary); }
+        .log-time { color: var(--muted); font-size: 0.8rem; }
+        .debug-controls { display: flex; gap: 8px; margin-bottom: 12px; }
+        .debug-controls button { padding: 8px 12px; font-size: 0.85rem; }
     </style>
     <script src="https://unpkg.com/leaflet@1.9.4/dist/leaflet.js"></script>
 </head>
@@ -145,6 +155,17 @@ app.get('/', (req, res) => {
             <ul id="roomList" class="room-list">
                 <li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>
             </ul>
+        </section>
+
+        <section class="room-card">
+            <h2>📡 Log de GPS (Debug)</h2>
+            <div class="debug-controls">
+                <button class="btn-primary" onclick="clearGpsLog()" style="font-size: 0.85rem; padding: 8px 12px;">Limpar log</button>
+                <button class="btn-primary" onclick="toggleAutoScroll()" id="autoScrollBtn" style="font-size: 0.85rem; padding: 8px 12px;">Auto-scroll: ON</button>
+            </div>
+            <div id="gpsLog" class="debug-log">
+                <div class="log-entry info"><span class="log-time">[00:00:00]</span> Sistema iniciado, aguardando dados...</div>
+            </div>
         </section>
     </div>
 
