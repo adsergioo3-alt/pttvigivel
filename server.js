@@ -7,7 +7,7 @@ const app = express();
 const server = http.createServer(app);
 const wss = new WebSocket.Server({ server });
 
-// roomName -> Map(ws -> {name, peerId})
+// roomName -> Map(ws -> {name, peerId, isTalking, lat, lng})
 const rooms = new Map();
 let lastLocationUpdate = null;
 
@@ -40,6 +40,7 @@ function getStatus() {
     };
 }
 
+// --- ROTAS DO EXPRESS ---
 app.get('/', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="pt-BR">
@@ -49,18 +50,7 @@ app.get('/', (req, res) => {
     <title>PTT Service Status</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>
-        :root {
-            color-scheme: light;
-            --bg: #eef1f8;
-            --card: #ffffff;
-            --text: #111827;
-            --muted: #6b7280;
-            --border: #d1d5db;
-            --primary: #2563eb;
-            --danger: #dc2626;
-            --success: #16a34a;
-            --surface: #f8fafc;
-        }
+        :root { color-scheme: light; --bg: #eef1f8; --card: #ffffff; --text: #111827; --muted: #6b7280; --border: #d1d5db; --primary: #2563eb; --danger: #dc2626; --success: #16a34a; --surface: #f8fafc; }
         * { box-sizing: border-box; }
         body { margin: 0; min-height: 100vh; font-family: Inter, system-ui, -apple-system, BlinkMacSystemFont, 'Segoe UI', sans-serif; background: radial-gradient(circle at top, rgba(37,99,235,0.12), transparent 32%), var(--bg); color: var(--text); display: flex; align-items: center; justify-content: center; padding: 24px; }
         .container { width: min(100%, 940px); display: grid; gap: 20px; }
@@ -104,26 +94,11 @@ app.get('/', (req, res) => {
                 <div id="statusBadge" class="status-pill"><span class="status-dot"></span><span id="status">carregando...</span></div>
             </header>
             <div class="grid">
-                <div class="metric">
-                    <strong>Salas</strong>
-                    <span id="rooms">0</span>
-                </div>
-                <div class="metric">
-                    <strong>Clientes conectados</strong>
-                    <span id="clients">0</span>
-                </div>
-                <div class="metric">
-                    <strong>Última atualização</strong>
-                    <span id="time">--:--:--</span>
-                </div>
-                <div class="metric">
-                    <strong>Último GPS</strong>
-                    <span id="lastLocation">nenhum</span>
-                </div>
-                <div class="metric">
-                    <strong>Próxima atualização</strong>
-                    <span id="nextRefresh">--</span>
-                </div>
+                <div class="metric"><strong>Salas</strong><span id="rooms">0</span></div>
+                <div class="metric"><strong>Clientes conectados</strong><span id="clients">0</span></div>
+                <div class="metric"><strong>Última atualização</strong><span id="time">--:--:--</span></div>
+                <div class="metric"><strong>Último GPS</strong><span id="lastLocation">nenhum</span></div>
+                <div class="metric"><strong>Próxima atualização</strong><span id="nextRefresh">--</span></div>
             </div>
             <div class="actions">
                 <button id="refreshBtn" class="btn-primary" onclick="refreshStatus()">Atualizar agora</button>
@@ -134,12 +109,10 @@ app.get('/', (req, res) => {
                 <p id="message" class="error" aria-live="polite"></p>
             </div>
         </section>
-
         <section class="room-card">
             <h2>Mapa de localização</h2>
             <div id="map"></div>
         </section>
-
         <section class="room-card">
             <h2>Salas ativas</h2>
             <ul id="roomList" class="room-list">
@@ -147,7 +120,6 @@ app.get('/', (req, res) => {
             </ul>
         </section>
     </div>
-
     <script>
         const refreshBtn = document.getElementById('refreshBtn');
         const clearBtn = document.getElementById('clearBtn');
@@ -164,19 +136,13 @@ app.get('/', (req, res) => {
 
         function initMap() {
             map = L.map('map', { zoomControl: true, attributionControl: false }).setView([-15.7801, -47.9292], 4);
-            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', {
-                maxZoom: 19,
-                attribution: '&copy; OpenStreetMap contributors',
-            }).addTo(map);
+            L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19, attribution: '&copy; OpenStreetMap contributors' }).addTo(map);
         }
 
         function updateMapLocations(locations) {
             markers.forEach(marker => map.removeLayer(marker));
             markers = [];
-            if (!locations || !locations.length) {
-                map.setView([-15.7801, -47.9292], 4);
-                return;
-            }
+            if (!locations || !locations.length) { map.setView([-15.7801, -47.9292], 4); return; }
             const bounds = [];
             locations.forEach(loc => {
                 if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
@@ -185,27 +151,15 @@ app.get('/', (req, res) => {
                 markers.push(marker);
                 bounds.push([loc.lat, loc.lng]);
             });
-            if (bounds.length) {
-                map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
-            }
+            if (bounds.length) { map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] }); }
         }
 
-        function setLoading(isLoading) {
-            refreshBtn.disabled = isLoading;
-            clearBtn.disabled = isLoading;
-        }
-
-        function updateCountdown() {
-            const seconds = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000));
-            nextRefreshEl.textContent = seconds === 0 ? 'agora' : seconds + 's';
-        }
+        function setLoading(isLoading) { refreshBtn.disabled = isLoading; clearBtn.disabled = isLoading; }
+        function updateCountdown() { const seconds = Math.max(0, Math.round((nextRefreshAt - Date.now()) / 1000)); nextRefreshEl.textContent = seconds === 0 ? 'agora' : seconds + 's'; }
 
         function renderRooms(roomDetails) {
             roomList.innerHTML = '';
-            if (!roomDetails.length) {
-                roomList.innerHTML = '<li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>';
-                return;
-            }
+            if (!roomDetails.length) { roomList.innerHTML = '<li class="room-item no-rooms">Nenhuma sala ativa no momento.</li>'; return; }
             roomDetails.forEach(({ room, users }) => {
                 const li = document.createElement('li');
                 li.className = 'room-item';
@@ -215,13 +169,11 @@ app.get('/', (req, res) => {
         }
 
         async function refreshStatus() {
-            setLoading(true);
-            messageEl.textContent = '';
+            setLoading(true); messageEl.textContent = '';
             try {
                 const response = await fetch('/status');
                 if (!response.ok) throw new Error('Não foi possível obter o status.');
                 const data = await response.json();
-
                 statusEl.textContent = data.status;
                 statusBadge.className = 'status-pill' + (data.status !== 'online' ? ' offline' : '');
                 document.getElementById('rooms').textContent = data.rooms;
@@ -230,40 +182,25 @@ app.get('/', (req, res) => {
                 lastLocationEl.textContent = data.lastLocationUpdate ? data.lastLocationUpdate.message : 'nenhum';
                 renderRooms(data.roomDetails);
                 updateMapLocations(data.userLocations);
-                nextRefreshAt = Date.now() + 10000;
-                updateCountdown();
+                nextRefreshAt = Date.now() + 10000; updateCountdown();
             } catch (error) {
-                statusEl.textContent = 'offline';
-                statusBadge.className = 'status-pill offline';
-                document.getElementById('rooms').textContent = '-';
-                document.getElementById('clients').textContent = '-';
-                document.getElementById('time').textContent = '--';
-                roomList.innerHTML = '<li class="room-item no-rooms">Falha ao carregar dados.</li>';
-                messageEl.textContent = error.message;
-            } finally {
-                setLoading(false);
-            }
+                statusEl.textContent = 'offline'; statusBadge.className = 'status-pill offline';
+                document.getElementById('rooms').textContent = '-'; document.getElementById('clients').textContent = '-'; document.getElementById('time').textContent = '--';
+                roomList.innerHTML = '<li class="room-item no-rooms">Falha ao carregar dados.</li>'; messageEl.textContent = error.message;
+            } finally { setLoading(false); }
         }
 
         async function clearRooms() {
             if (!confirm('Tem certeza que deseja limpar todas as salas?')) return;
-            setLoading(true);
-            messageEl.textContent = '';
+            setLoading(true); messageEl.textContent = '';
             try {
                 const response = await fetch('/clear-rooms', { method: 'POST' });
                 if (!response.ok) throw new Error('Erro ao limpar salas.');
                 await refreshStatus();
-            } catch (error) {
-                messageEl.textContent = error.message;
-            } finally {
-                setLoading(false);
-            }
+            } catch (error) { messageEl.textContent = error.message; } finally { setLoading(false); }
         }
 
-        initMap();
-        refreshStatus();
-        countdownTimer = setInterval(updateCountdown, 250);
-        setInterval(refreshStatus, 10000);
+        initMap(); refreshStatus(); countdownTimer = setInterval(updateCountdown, 250); setInterval(refreshStatus, 10000);
     </script>
 </body>
 </html>`);
@@ -273,9 +210,7 @@ app.get('/map', (req, res) => {
     res.send(`<!DOCTYPE html>
 <html lang="pt-BR">
 <head>
-    <meta charset="utf-8">
-    <meta name="viewport" content="width=device-width,initial-scale=1">
-    <title>Mapa - PTT</title>
+    <meta charset="utf-8"><meta name="viewport" content="width=device-width,initial-scale=1"><title>Mapa - PTT</title>
     <link rel="stylesheet" href="https://unpkg.com/leaflet@1.9.4/dist/leaflet.css" />
     <style>html,body,#map{height:100%;margin:0;padding:0}body{font-family:Inter,system-ui,Arial,sans-serif}</style>
 </head>
@@ -286,72 +221,48 @@ app.get('/map', (req, res) => {
         const map = L.map('map', { zoomControl: true, attributionControl: false }).setView([-15.7801, -47.9292], 4);
         L.tileLayer('https://{s}.tile.openstreetmap.org/{z}/{x}/{y}.png', { maxZoom: 19 }).addTo(map);
         let markers = [];
-
         function updateMarkers(locations) {
-            markers.forEach(m => map.removeLayer(m));
-            markers = [];
+            markers.forEach(m => map.removeLayer(m)); markers = [];
             if (!locations || !locations.length) return;
             const bounds = [];
             locations.forEach(loc => {
                 if (typeof loc.lat !== 'number' || typeof loc.lng !== 'number') return;
                 const m = L.marker([loc.lat, loc.lng]).addTo(map);
                 m.bindPopup('<strong>' + (loc.name || 'sem nome') + '</strong><br>' + (loc.room || ''));
-                markers.push(m);
-                bounds.push([loc.lat, loc.lng]);
+                markers.push(m); bounds.push([loc.lat, loc.lng]);
             });
             if (bounds.length) map.fitBounds(bounds, { maxZoom: 12, padding: [24, 24] });
         }
-
-        async function refresh() {
-            try {
-                const res = await fetch('/status');
-                if (!res.ok) throw new Error('Falha ao obter status');
-                const data = await res.json();
-                updateMarkers(data.userLocations);
-            } catch (e) {
-                console.error(e);
-            }
-        }
-
-        refresh();
-        setInterval(refresh, 5000);
+        async function refresh() { try { const res = await fetch('/status'); if (!res.ok) throw new Error('Falha ao obter status'); const data = await res.json(); updateMarkers(data.userLocations); } catch (e) { console.error(e); } }
+        refresh(); setInterval(refresh, 5000);
     </script>
 </body>
 </html>`);
 });
 
-app.get('/status', (req, res) => {
-    res.json(getStatus());
-});
+app.get('/status', (req, res) => { res.json(getStatus()); });
+app.post('/clear-rooms', (req, res) => { clearAllRooms(); res.json({ status: 'rooms_cleared' }); });
 
-app.post('/clear-rooms', (req, res) => {
-    clearAllRooms();
-    res.json({ status: 'rooms_cleared' });
-});
 
+// --- NÚCLEO WEBSOCKET ---
 wss.on('connection', (ws) => {
     console.log('Dispositivo conectado');
 
     ws.on('message', (message) => {
         try {
-            // CONVERSÃO VITAL: Transforma o Buffer recebido em String de texto
             const msgText = message.toString();
-
-            // Agora sim tentamos o JSON.parse
             const data = JSON.parse(msgText);
-            console.log('[WS] mensagem recebida:', data.type || 'sem tipo', msgText);
+            console.log('[WS] mensagem recebida:', data.type || 'sem tipo');
 
             if (data.type === 'register') {
                 const { room, name, peerId } = data;
                 ws.room = room;
-                ws.userData = { name, peerId, isTalking: false };
+                ws.userData = { name, peerId, isTalking: false, lat: null, lng: null };
 
                 if (!rooms.has(room)) rooms.set(room, new Map());
                 const roomMap = rooms.get(room);
 
-                // Prevenção de logins duplicados: se já existir um cliente
-                // com o mesmo `peerId` (preferido) ou `name`, encerramos a
-                // conexão antiga e substituímos pela nova.
+                // Prevenção de logins duplicados
                 let existingClient = null;
                 for (const [client, udata] of roomMap.entries()) {
                     if (!udata) continue;
@@ -365,53 +276,57 @@ wss.on('connection', (ws) => {
                     try {
                         existingClient.send(JSON.stringify({ type: 'duplicate_login', reason: 'replaced_by_new_connection' }));
                         existingClient.close(4000, 'replaced_by_new_connection');
-                    } catch (e) {
-                        // ignora erros ao fechar a conexão antiga
-                    }
+                    } catch (e) {}
                     roomMap.delete(existingClient);
                 }
 
                 roomMap.set(ws, ws.userData);
-
                 console.log(`[Registro] ${name} entrou na sala ${room}`);
                 broadcastPresence(room);
             }
 
             // Repasse de áudio
             if (data.type === 'audio') {
-                if (ws.room) {
-                    // Repassa exatamente a mesma string para os outros
-                    broadcastToRoom(ws.room, msgText, ws);
-                }
+                if (ws.room) broadcastToRoom(ws.room, msgText, ws);
             }
 
-            // Repasse de imagens
+            // Repasse de imagens normais
             if (data.type === 'image') {
+                if (ws.room) broadcastToRoom(ws.room, msgText, ws);
+            }
+
+            // ==========================================
+            // FIX/MUDANÇA AQUI: TRANSMISSÃO DE VÍDEO DE EMERGÊNCIA
+            // ==========================================
+            if (data.type === 'emergency_video') {
                 if (ws.room) {
-                    console.log(`[Imagem] Recebida de: ${data.name} na sala ${ws.room}`);
-                    // Repassa exatamente a mesma string para os outros usuários na sala
+                    console.log(`[Emergência] Retransmitindo vídeo de ${data.name || ws.userData?.name} na sala ${ws.room}`);
+                    // Envia exatamente a string JSON recebida para todos na sala
                     broadcastToRoom(ws.room, msgText, ws);
                 }
             }
 
+            // Atualização Silenciosa de Localização (Mapa)
             if (data.type === 'location_update' || data.type === 'location') {
                 const lat = Number(data.lat);
                 const lng = Number(data.lng);
+
                 if (!Number.isFinite(lat) || !Number.isFinite(lng)) {
                     console.warn('[Localização] coordenadas inválidas recebidas:', data.lat, data.lng);
                 } else {
                     if (!ws.userData) {
-                        ws.userData = { name: data.name || 'desconhecido' };
-                        if (ws.room) {
-                            if (!rooms.has(ws.room)) rooms.set(ws.room, new Map());
-                            rooms.get(ws.room).set(ws, ws.userData);
-                        }
+                        ws.userData = { name: data.name || 'desconhecido', isTalking: false, lat: null, lng: null };
                     }
-                    if (data.name) ws.userData.name = data.name;
+                    
                     ws.userData.lat = lat;
                     ws.userData.lng = lng;
+                    if (data.name) ws.userData.name = data.name;
+
+                    if (ws.room && rooms.has(ws.room)) {
+                        rooms.get(ws.room).set(ws, ws.userData);
+                    }
+
                     const logMessage = `[Localização] ${ws.userData.name} está em: ${lat}, ${lng} na sala ${ws.room || 'sem sala'}`;
-                    console.log(logMessage);
                     lastLocationUpdate = {
                         timestamp: new Date().toISOString(),
                         name: ws.userData.name,
@@ -420,6 +335,10 @@ wss.on('connection', (ws) => {
                         lng,
                         message: logMessage,
                     };
+
+                    if (ws.room) {
+                        broadcastPresence(ws.room);
+                    }
                 }
             }
 
@@ -452,21 +371,14 @@ function broadcastPresence(roomName) {
     });
 }
 
-function broadcastTalkingState(roomName, senderWs) {
-    const room = rooms.get(roomName);
-    if (!room) return;
-    const sender = room.get(senderWs) || senderWs.userData || {};
-    const msg = JSON.stringify({ type: 'user_talking', name: sender.name, isTalking: sender.isTalking });
-    room.forEach((userData, client) => {
-        if (client !== senderWs && client.readyState === WebSocket.OPEN) client.send(msg);
-    });
-}
-
 function broadcastToRoom(roomName, msgText, senderWs) {
     const room = rooms.get(roomName);
     if (!room) return;
     room.forEach((userData, client) => {
-        if (client !== senderWs && client.readyState === WebSocket.OPEN) client.send(msgText);
+        // Envia para todo mundo na sala, MENOS para quem enviou os frames
+        if (client !== senderWs && client.readyState === WebSocket.OPEN) {
+            client.send(msgText);
+        }
     });
 }
 
@@ -483,5 +395,5 @@ function clearAllRooms() {
     }
 }
 
-const PORT = process.env.PORT || 3000;
+const PORT = process.env.PORT || 5000;
 server.listen(PORT, () => console.log(`Servidor PTT rodando na porta ${PORT}`));
